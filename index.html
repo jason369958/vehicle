@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>车辆分布实时管理系统 - 交互看板版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 固定表头及滚动条优化 */
+        .table-container { height: calc(100vh - 400px); overflow-y: auto; border-radius: 1rem; }
+        thead th { position: sticky; top: 0; background-color: #0f172a; color: white; z-index: 20; }
+        
+        /* 分类特定样式 */
+        .row-执法保障 { border-left: 4px solid #3b82f6; }
+        .row-公务用车 { border-left: 4px solid #10b981; }
+        .row-流转车辆 { border-left: 4px solid #f59e0b; }
+        
+        .header-执法保障 { background-color: #f8fafc; color: #1e40af; }
+        .header-公务用车 { background-color: #f8fafc; color: #065f46; }
+        .header-流转车辆 { background-color: #f8fafc; color: #92400e; }
+
+        /* 隐藏项 */
+        .hidden-row { display: none !important; }
+        
+        /* 统计卡片交互 */
+        .stat-card { 
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            border-width: 2px;
+        }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .stat-card.active-filter { border-color: #3b82f6; background-color: #eff6ff; }
+
+        /* 副标题交互样式 */
+        .clickable-stat {
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .clickable-stat:hover {
+            background-color: #f1f5f9;
+            color: #2563eb;
+        }
+        .clickable-stat.active {
+            background-color: #e0f2fe;
+            color: #0369a1;
+            box-shadow: inset 0 0 0 1px #bae6fd;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade { animation: fadeIn 0.4s ease-out; }
+    </style>
+</head>
+<body class="bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- 头部导航与自动统计排头 -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-2xl shadow-sm border border-slate-200 gap-4">
+            <div class="flex-1 w-full">
+                <h1 class="text-2xl font-black tracking-tight text-slate-800">新城通车辆分布管理系统</h1>
+                <div id="categoryStatsHeader" class="flex flex-wrap items-center gap-x-1 gap-y-1 mt-2 text-sm font-bold text-slate-600">
+                    <!-- 由 JS 自动填充统计数据 -->
+                </div>
+            </div>
+            <div class="flex gap-2 shrink-0">
+                <button onclick="clearFilter()" id="clearBtn" class="hidden bg-orange-100 hover:bg-orange-200 text-orange-700 px-4 py-2 rounded-xl font-bold transition-all text-xs">
+                    清除筛选
+                </button>
+                <button onclick="clearStorage()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-xl font-bold transition-all active:scale-95 text-xs">
+                    重置数据
+                </button>
+                <button onclick="exportCSV()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95 text-sm">
+                    导出明细表
+                </button>
+            </div>
+        </div>
+
+        <!-- 实时分布统计看板 (仅保留停放地点) -->
+        <div class="space-y-4">
+            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">实时停放分布 (点击地点进行筛选)</h3>
+            <div id="locationStatsBoard" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
+        </div>
+
+        <!-- 搜索定位器 -->
+        <div class="bg-slate-900 p-6 rounded-2xl shadow-xl">
+            <div class="flex flex-col lg:flex-row items-center gap-6">
+                <div class="flex-1 w-full">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-4 flex items-center text-slate-400">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </span>
+                        <input type="text" id="searchInput" oninput="handleSearch()" placeholder="输入车牌号快速定位车辆..." 
+                               class="w-full bg-slate-800 border-none text-white placeholder-slate-500 rounded-xl pl-12 pr-4 py-4 focus:ring-4 focus:ring-blue-500/30 outline-none text-xl font-medium transition-all">
+                    </div>
+                </div>
+                <div id="searchResult" class="hidden w-full lg:w-96 bg-blue-600 p-4 rounded-xl flex items-center gap-4">
+                    <div class="bg-white/20 p-2 rounded-lg text-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="text-blue-100 text-xs font-bold uppercase">定位成功</p>
+                        <p id="resultText" class="text-white font-black text-lg"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 数据明细表格 -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="table-container" id="scrollContainer">
+                <table class="w-full text-left border-collapse" id="mainTable">
+                    <thead>
+                        <tr>
+                            <th class="p-4 text-sm font-bold uppercase tracking-wider">序号</th>
+                            <th class="p-4 text-sm font-bold uppercase tracking-wider">车牌号码</th>
+                            <th class="p-4 text-sm font-bold uppercase tracking-wider">管理类型</th>
+                            <th class="p-4 text-sm font-bold uppercase tracking-wider">实时停放地点</th>
+                            <th class="p-4 text-sm font-bold uppercase tracking-wider">最后更新时间</th>
+                            <th class="p-4 text-sm font-bold uppercase tracking-wider">分类归属</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const vehicleDatabase = {
+            "执法保障": ["鄂A074R0", "鄂A074T0", "鄂A00VU7", "鄂A034E1", "鄂A00VJ9", "鄂A03TC2", "鄂A06TR7", "鄂A06TJ0", "鄂A07WU7", "鄂A03TH3", "鄂A00VG5", "鄂A03TF0", "鄂A074C5", "鄂A00VZ7", "鄂A03TE3", "鄂A00TD5", "鄂A06VD1", "鄂A06VM0", "鄂A07VF9", "鄂A074K3", "鄂A07TQ6", "鄂A03VH0", "鄂A07TC6", "鄂A00VU5", "鄂A094U7", "鄂A06DE9", "鄂A00VJ6", "鄂A07TX6", "鄂A00VF9", "鄂A094T0", "鄂A07TZ9", "鄂A07TU6", "鄂A03TM0", "鄂A00VT5"],
+            "公务用车": ["鄂A19DE6", "鄂A074E1", "鄂A00VM5", "鄂A00VD6", "鄂A03WF3", "鄂A074D5", "鄂A00VY5", "鄂A07WM5", "鄂A00VJ7", "鄂AR8700", "鄂A00VJ5", "鄂A04D7F", "鄂A03VT0", "鄂A07VG9", "鄂A16B6M", "鄂A03WG3", "鄂A00VZ5", "鄂A00VT7"],
+            "流转车辆": ["鄂W178P7", "鄂W478W7", "鄂W097Q9", "鄂W74W72", "鄂WM1047", "鄂W7Z487", "鄂W163R0", "鄂W716K3", "鄂W370L1", "鄂W739X7", "鄂W74W47", "鄂W232Z1", "鄂A2GG02", "鄂W901Z2", "鄂W953Y1", "鄂W575S9", "鄂W3F747", "鄂WZ1747", "鄂W610S3", "鄂W353X7", "鄂WM8452", "鄂W709R5", "鄂W172U5"]
+        };
+
+        const locationList = ["通达广场", "武昌大道停车场", "区应急管理局", "城投集团", "修理厂", "物业公司", "永泰公司", "翔实公司", "城更集团", "集团总工室", "集团区内项目"];
+        const STORAGE_KEY = "vehicle_management_data_v6";
+        let currentFilterLocation = null;
+        let currentFilterType = null;
+        let currentFilterCat = null;
+
+        function loadSavedData() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            return saved ? JSON.parse(saved) : {};
+        }
+
+        function formatDateTime(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            const hh = String(date.getHours()).padStart(2, '0');
+            const mm = String(date.getMinutes()).padStart(2, '0');
+            const ss = String(date.getSeconds()).padStart(2, '0');
+            return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+        }
+
+        function saveData(plate, field, value) {
+            const currentData = loadSavedData();
+            const now = formatDateTime(new Date());
+            
+            if (!currentData[plate]) currentData[plate] = {};
+            currentData[plate][field] = value;
+            currentData[plate]["updatedAt"] = now;
+            
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData));
+            
+            const row = document.querySelector(`tr[data-plate="${plate}"]`);
+            if(row) {
+                row.querySelector('.update-time-cell').innerText = now;
+                // 更新下拉菜单颜色
+                if(field === 'type') {
+                    const sel = row.querySelector('.type-selector');
+                    sel.classList.toggle('text-amber-600', value === '外租');
+                    sel.classList.toggle('text-emerald-600', value === '自用');
+                }
+            }
+
+            updateLocationStats();
+            updateCategoryHeader(); 
+            reApplyCurrentFilters();
+        }
+
+        function reApplyCurrentFilters() {
+            if (currentFilterLocation) applyLocationFilter(currentFilterLocation);
+            else if (currentFilterType) applyTypeFilter(currentFilterType);
+            else if (currentFilterCat) applyCatFilter(currentFilterCat);
+        }
+
+        function clearStorage() {
+            if(confirm("确定要重置所有交互数据吗？")) {
+                localStorage.removeItem(STORAGE_KEY);
+                clearFilter();
+                buildTable();
+            }
+        }
+
+        function updateCategoryHeader() {
+            const headerContainer = document.getElementById('categoryStatsHeader');
+            const savedData = loadSavedData();
+            let selfCount = 0, rentCount = 0;
+            
+            const entries = Object.entries(vehicleDatabase);
+            let statsHtml = `<span onclick="clearFilter()" class="text-blue-600 font-black mr-2 clickable-stat">车辆总规模：75台</span><span class="text-slate-300">|</span>`;
+            
+            entries.forEach(([cat, plates]) => {
+                const isActive = currentFilterCat === cat ? 'active' : '';
+                statsHtml += `<span onclick="applyCatFilter('${cat}')" class="ml-1 text-slate-800 clickable-stat ${isActive}">${cat}：${plates.length}台</span>`;
+                plates.forEach(plate => {
+                    const type = savedData[plate]?.type || "自用";
+                    if(type === "自用") selfCount++; else rentCount++;
+                });
+            });
+            
+            statsHtml += `<span class="text-slate-300 mx-2">|</span>`;
+            
+            const selfActive = currentFilterType === '自用' ? 'active' : '';
+            const rentActive = currentFilterType === '外租' ? 'active' : '';
+            
+            statsHtml += `<span onclick="applyTypeFilter('自用')" class="text-emerald-600 font-black clickable-stat ${selfActive}">自用：${selfCount}台</span>`;
+            statsHtml += `<span onclick="applyTypeFilter('外租')" class="text-amber-600 font-black ml-2 clickable-stat ${rentActive}">外租：${rentCount}台</span>`;
+            
+            headerContainer.innerHTML = statsHtml;
+        }
+
+        function applyCatFilter(cat) {
+            if (currentFilterCat === cat) { clearFilter(); return; }
+            clearFilter();
+            currentFilterCat = cat;
+            document.getElementById('clearBtn').classList.remove('hidden');
+
+            const rows = document.querySelectorAll('.vehicle-row');
+            const headers = document.querySelectorAll('.group-header');
+
+            rows.forEach(row => {
+                if (row.dataset.category === cat) row.classList.remove('hidden-row');
+                else row.classList.add('hidden-row');
+            });
+            headers.forEach(h => {
+                if (h.dataset.category === cat) h.classList.remove('hidden-row');
+                else h.classList.add('hidden-row');
+            });
+            updateCategoryHeader();
+        }
+
+        function applyTypeFilter(type) {
+            if (currentFilterType === type) { clearFilter(); return; }
+            clearFilter();
+            currentFilterType = type;
+            document.getElementById('clearBtn').classList.remove('hidden');
+            
+            const rows = document.querySelectorAll('.vehicle-row');
+            const headers = document.querySelectorAll('.group-header');
+            const catVisible = { "执法保障": 0, "公务用车": 0, "流转车辆": 0 };
+
+            rows.forEach(row => {
+                const rowType = row.querySelector('.type-selector').value;
+                if (rowType === type) {
+                    row.classList.remove('hidden-row');
+                    catVisible[row.dataset.category]++;
+                } else {
+                    row.classList.add('hidden-row');
+                }
+            });
+            headers.forEach(h => {
+                if (catVisible[h.dataset.category] > 0) h.classList.remove('hidden-row');
+                else h.classList.add('hidden-row');
+            });
+            updateCategoryHeader();
+        }
+
+        function applyLocationFilter(location) {
+            if (currentFilterLocation === location) { clearFilter(); return; }
+            clearFilter();
+            currentFilterLocation = location;
+            document.getElementById('clearBtn').classList.remove('hidden');
+
+            const rows = document.querySelectorAll('.vehicle-row');
+            const headers = document.querySelectorAll('.group-header');
+            const catVisible = { "执法保障": 0, "公务用车": 0, "流转车辆": 0 };
+
+            rows.forEach(row => {
+                const rowLoc = row.querySelector('.location-selector').value;
+                if (rowLoc === location) {
+                    row.classList.remove('hidden-row');
+                    catVisible[row.dataset.category]++;
+                } else {
+                    row.classList.add('hidden-row');
+                }
+            });
+            headers.forEach(h => {
+                if (catVisible[h.dataset.category] > 0) h.classList.remove('hidden-row');
+                else h.classList.add('hidden-row');
+            });
+            updateLocationStats();
+        }
+
+        function clearFilter() {
+            currentFilterLocation = null;
+            currentFilterType = null;
+            currentFilterCat = null;
+            document.getElementById('clearBtn').classList.add('hidden');
+            document.querySelectorAll('.vehicle-row, .group-header').forEach(r => r.classList.remove('hidden-row'));
+            document.getElementById('searchInput').value = "";
+            document.getElementById('searchResult').classList.add('hidden');
+            updateLocationStats();
+            updateCategoryHeader();
+        }
+
+        function updateLocationStats() {
+            const savedData = loadSavedData();
+            const stats = {};
+            locationList.forEach(loc => stats[loc] = 0);
+
+            for (const [category, plates] of Object.entries(vehicleDatabase)) {
+                plates.forEach(plate => {
+                    const loc = savedData[plate]?.location || "通达广场";
+                    stats[loc]++;
+                });
+            }
+
+            const board = document.getElementById('locationStatsBoard');
+            board.innerHTML = "";
+            Object.entries(stats).filter(([_, count]) => count > 0).sort((a, b) => b[1] - a[1]).forEach(([loc, count]) => {
+                const card = document.createElement('div');
+                card.className = `stat-card bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between animate-fade ${currentFilterLocation === loc ? 'active-filter' : ''}`;
+                card.onclick = () => applyLocationFilter(loc);
+                // 将此处地点文字从 text-xs 修改为 text-sm
+                card.innerHTML = `<p class="text-sm font-bold text-slate-700 truncate pr-1">${loc}</p>
+                    <span class="text-lg font-black text-blue-600">${count}</span>`;
+                board.appendChild(card);
+            });
+        }
+
+        function buildTable() {
+            const body = document.getElementById('tableBody');
+            const savedData = loadSavedData();
+            body.innerHTML = "";
+            updateCategoryHeader();
+            updateLocationStats();
+
+            for (const [category, plates] of Object.entries(vehicleDatabase)) {
+                const headerRow = document.createElement('tr');
+                headerRow.className = `header-${category} sticky top-0 z-10 border-b border-slate-200 group-header`;
+                headerRow.dataset.category = category;
+                headerRow.innerHTML = `<td colspan="6" class="p-3 font-black text-sm uppercase tracking-widest">${category} (${plates.length})</td>`;
+                body.appendChild(headerRow);
+
+                plates.forEach((plate, index) => {
+                    const tr = document.createElement('tr');
+                    tr.className = `row-${category} border-b border-slate-100 hover:bg-slate-50 transition-colors vehicle-row`;
+                    tr.dataset.plate = plate;
+                    tr.dataset.category = category;
+                    const savedType = savedData[plate]?.type || "自用";
+                    const savedLoc = savedData[plate]?.location || "通达广场";
+                    const savedTime = savedData[plate]?.updatedAt || "-";
+
+                    tr.innerHTML = `
+                        <td class="p-4 text-slate-400 font-mono text-sm">${index + 1}</td>
+                        <td class="p-4 font-bold text-slate-700 font-mono text-sm">${plate}</td>
+                        <td class="p-4">
+                            <select onchange="saveData('${plate}', 'type', this.value)" class="type-selector bg-slate-50 border border-slate-100 rounded px-2 py-1 text-sm font-bold outline-none ${savedType === '外租' ? 'text-amber-600' : 'text-emerald-600'}">
+                                <option ${savedType === '自用' ? 'selected' : ''}>自用</option>
+                                <option ${savedType === '外租' ? 'selected' : ''}>外租</option>
+                            </select>
+                        </td>
+                        <td class="p-4">
+                            <select onchange="saveData('${plate}', 'location', this.value)" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm font-bold location-selector focus:ring-2 focus:ring-blue-500">
+                                ${locationList.map(l => `<option ${l === savedLoc ? 'selected' : ''}>${l}</option>`).join('')}
+                            </select>
+                        </td>
+                        <td class="p-4 text-slate-400 font-mono text-sm update-time-cell">${savedTime}</td>
+                        <td class="p-4 text-sm text-slate-400 font-bold">${category}</td>
+                    `;
+                    body.appendChild(tr);
+                });
+            }
+        }
+
+        function handleSearch() {
+            const val = document.getElementById('searchInput').value.toUpperCase().trim();
+            const resultBox = document.getElementById('searchResult');
+            const resultText = document.getElementById('resultText');
+            const rows = document.querySelectorAll('.vehicle-row');
+            const headers = document.querySelectorAll('.group-header');
+
+            if (!val) { clearFilter(); return; }
+            resultBox.classList.add('hidden');
+            const catVisible = { "执法保障": 0, "公务用车": 0, "流转车辆": 0 };
+
+            rows.forEach(row => {
+                const p = row.dataset.plate;
+                if (p.includes(val)) {
+                    row.classList.remove('hidden-row');
+                    catVisible[row.dataset.category]++;
+                    if (p === val) {
+                        row.classList.add('bg-blue-50');
+                        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        resultText.innerText = `${p} 正在 ${row.querySelector('.location-selector').value}`;
+                        resultBox.classList.remove('hidden');
+                    }
+                } else {
+                    row.classList.add('hidden-row');
+                }
+            });
+            headers.forEach(h => {
+                if (catVisible[h.dataset.category] > 0) h.classList.remove('hidden-row');
+                else h.classList.add('hidden-row');
+            });
+        }
+
+        function exportCSV() {
+            let csv = "\uFEFF序号,分类,车牌,类型,地点,最后修改时间\n";
+            document.querySelectorAll('.vehicle-row').forEach(row => {
+                if (!row.classList.contains('hidden-row')) {
+                    const plate = row.dataset.plate;
+                    const type = row.querySelector('.type-selector').value;
+                    const loc = row.querySelector('.location-selector').value;
+                    const time = row.querySelector('.update-time-cell').innerText;
+                    csv += `${row.cells[0].innerText},${row.dataset.category},${plate},${type},${loc},${time}\n`;
+                }
+            });
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = `车辆分布导出_${new Date().toLocaleDateString()}.csv`;
+            a.click();
+        }
+
+        window.onload = buildTable;
+    </script>
+</body>
+</html>
